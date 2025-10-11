@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 import dynamic from "next/dynamic";
+import { createClient } from "@supabase/supabase-js";
 
-// Cargar el mapa solo en el cliente
+// 📍 Cargar el mapa de forma dinámica (sin SSR)
 const Map = dynamic(() => import("@/components/ClientesMap"), { ssr: false });
 
-// Configuración Supabase
+// 🔧 Conexión Supabase
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -30,98 +30,75 @@ export default function ClientesPage() {
   const [form, setForm] = useState<Partial<Cliente>>({});
   const [loading, setLoading] = useState(false);
 
-  // Cargar clientes desde Supabase
+  // ✅ Cargar clientes desde Supabase
   async function loadClientes() {
     const { data, error } = await supabase
       .from("crm_clientes")
       .select("*")
       .order("created_at", { ascending: false });
-
     if (error) console.error(error);
     else setClientes(data || []);
   }
 
   useEffect(() => {
     loadClientes();
-
-    // Escuchar cambios en tiempo real (INSERT, DELETE, UPDATE)
-    const channel = supabase
-      .channel("realtime-clientes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "crm_clientes" },
-        () => {
-          loadClientes(); // recargar automáticamente
-        }
-      )
-      .subscribe();
-
-    // Limpieza del canal cuando se desmonta el componente
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, []);
 
-  // Capturar coordenadas
-  async function getUbicacion() {
-    if (!navigator.geolocation) {
-      alert("Geolocalización no soportada");
+  // ✅ Guardar cliente nuevo
+  async function saveCliente(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.nombre || !form.rut) {
+      alert("Debe ingresar Nombre y RUT del cliente");
       return;
     }
 
+    if (!form.lat || !form.lng) {
+      alert("Debe seleccionar la ubicación en el mapa o usar GPS.");
+      return;
+    }
+
+    setLoading(true);
+    const { error } = await supabase.from("crm_clientes").insert([form]);
+    if (error) alert("Error al guardar: " + error.message);
+    else {
+      alert("✅ Cliente registrado correctamente");
+      setForm({});
+      loadClientes();
+    }
+    setLoading(false);
+  }
+
+  // ✅ Obtener ubicación GPS actual
+  async function getUbicacion() {
+    if (!navigator.geolocation) {
+      alert("Geolocalización no soportada en este navegador");
+      return;
+    }
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude, longitude } = pos.coords;
-        setForm((f) => ({ ...f, lat: latitude, lng: longitude }));
-        alert(
-          `📍 Coordenadas registradas:\nLat: ${latitude.toFixed(
-            5
-          )} / Lng: ${longitude.toFixed(5)}`
-        );
+      (p) => {
+        const lat = p.coords.latitude;
+        const lng = p.coords.longitude;
+        setForm((f) => ({ ...f, lat, lng }));
+        alert(`📍 Coordenadas registradas:\nLat: ${lat.toFixed(5)} / Lng: ${lng.toFixed(5)}`);
       },
       (err) => alert("Error al obtener ubicación: " + err.message),
       { enableHighAccuracy: true, timeout: 10000 }
     );
   }
 
-  // Guardar nuevo cliente
-  async function saveCliente(e: React.FormEvent) {
-    e.preventDefault();
-
-    if (!form.nombre || !form.rut) {
-      alert("Debe ingresar Nombre y RUT del cliente");
-      return;
-    }
-
-    setLoading(true);
-
-    const nuevoCliente = {
-      nombre: form.nombre,
-      rut: form.rut,
-      direccion: form.direccion,
-      comuna: form.comuna,
-      ciudad: form.ciudad,
-      lat: form.lat ?? null,
-      lng: form.lng ?? null,
-    };
-
-    const { error } = await supabase.from("crm_clientes").insert([nuevoCliente]);
-
-    if (error) {
-      alert("Error al guardar: " + error.message);
-    } else {
-      alert("Cliente registrado ✅");
-      setForm({});
-    }
-
-    setLoading(false);
+  // ✅ Eliminar cliente
+  async function deleteCliente(id: string) {
+    if (!confirm("¿Seguro que desea eliminar este cliente?")) return;
+    const { error } = await supabase.from("crm_clientes").delete().eq("id", id);
+    if (error) alert("Error al eliminar: " + error.message);
+    else loadClientes();
   }
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-blue-800">Clientes</h1>
+      <h1 className="text-2xl font-bold text-blue-800">📋 Gestión de Clientes</h1>
 
-      {/* Formulario */}
+      {/* ===== FORMULARIO ===== */}
       <form
         onSubmit={saveCliente}
         className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-white p-4 rounded-lg shadow"
@@ -156,13 +133,12 @@ export default function ClientesPage() {
           value={form.ciudad || ""}
           onChange={(e) => setForm({ ...form, ciudad: e.target.value })}
         />
-
         <button
           type="button"
           onClick={getUbicacion}
           className="bg-emerald-600 text-white rounded px-3 hover:bg-emerald-700"
         >
-          📍 Obtener ubicación
+          📍 Obtener ubicación actual
         </button>
 
         <button
@@ -174,7 +150,7 @@ export default function ClientesPage() {
         </button>
       </form>
 
-      {/* Tabla */}
+      {/* ===== TABLA ===== */}
       <div className="overflow-x-auto bg-white rounded shadow">
         <table className="min-w-full text-sm">
           <thead className="bg-blue-100 text-blue-900">
@@ -186,6 +162,7 @@ export default function ClientesPage() {
               <th className="p-2 text-left">Ciudad</th>
               <th className="p-2 text-left">Lat</th>
               <th className="p-2 text-left">Lng</th>
+              <th className="p-2">🗑️</th>
             </tr>
           </thead>
           <tbody>
@@ -198,15 +175,33 @@ export default function ClientesPage() {
                 <td className="p-2">{c.ciudad}</td>
                 <td className="p-2">{c.lat?.toFixed(5)}</td>
                 <td className="p-2">{c.lng?.toFixed(5)}</td>
+                <td className="text-center">
+                  <button
+                    onClick={() => deleteCliente(c.id)}
+                    className="text-red-600 hover:text-red-800"
+                  >
+                    ✖
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {/* Mapa */}
+      {/* ===== MAPA ===== */}
       <div className="mt-4">
-        <Map clientes={clientes} />
+        <Map
+          clientes={clientes}
+          onMapClick={(lat, lng) => {
+            setForm((f) => ({ ...f, lat, lng }));
+            alert(
+              `📍 Coordenadas registradas:\nLat: ${lat.toFixed(
+                5
+              )} / Lng: ${lng.toFixed(5)}`
+            );
+          }}
+        />
       </div>
     </div>
   );

@@ -1,92 +1,90 @@
 "use client";
-import "@/lib/fixLeafletIcons";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
-import type { Map as LeafletMap } from "leaflet";
-import L from "leaflet";
-import { useEffect } from "react";
+
+import "@/lib/fixLeafletIcons"; // 👈 evita íconos rotos en Vercel
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  useMapEvents,
+} from "react-leaflet";
+import L, { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
 
+// ===== Tipos =====
 type Cliente = {
   id: string;
   nombre: string;
-  direccion?: string;
-  comuna?: string;
-  ciudad?: string;
   lat?: number;
   lng?: number;
 };
 
-/* 🔹 Ajustar el mapa automáticamente a todos los puntos */
-function FitToAllMarkers({ clientes }: { clientes: Cliente[] }) {
-  const map = useMap();
+interface ClientesMapProps {
+  clientes: Cliente[];
+  onMapClick?: (lat: number, lng: number) => void;
+}
 
-  useEffect(() => {
-    const coords = clientes
-      .filter(
-        (c) =>
-          typeof c.lat === "number" &&
-          typeof c.lng === "number" &&
-          !isNaN(c.lat) &&
-          !isNaN(c.lng)
-      )
-      .map((c) => [c.lat!, c.lng!] as [number, number]);
-
-    if (coords.length > 0) {
-      const bounds = L.latLngBounds(coords);
-      map.fitBounds(bounds, { padding: [80, 80], maxZoom: 14 });
-    }
-  }, [clientes, map]);
-
+// ===== Componente auxiliar para detectar clics =====
+function MapClickHandler({
+  onClick,
+}: {
+  onClick?: (lat: number, lng: number) => void;
+}) {
+  useMapEvents({
+    click(e) {
+      if (onClick) onClick(e.latlng.lat, e.latlng.lng);
+    },
+  });
   return null;
 }
 
-export default function ClientesMap({ clientes }: { clientes: Cliente[] }) {
-  const clientesConCoords = clientes.filter(
-    (c) =>
-      typeof c.lat === "number" &&
-      typeof c.lng === "number" &&
-      !isNaN(c.lat) &&
-      !isNaN(c.lng)
-  );
-
-  const center: [number, number] =
-    clientesConCoords.length > 0
-      ? [clientesConCoords[0].lat!, clientesConCoords[0].lng!]
+// ===== Componente principal =====
+export default function ClientesMap({ clientes, onMapClick }: ClientesMapProps) {
+  // 📍 Coordenadas de centro inicial
+  const center: LatLngExpression =
+    clientes.length && clientes[0].lat && clientes[0].lng
+      ? [clientes[0].lat, clientes[0].lng]
       : [-33.45, -70.66]; // Santiago por defecto
 
+  // 📌 Icono personalizado
+  const icon = L.icon({
+    iconUrl: "/marker-icon.png",
+    shadowUrl: "/marker-shadow.png",
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41],
+  });
+
   return (
-    <div className="h-[400px] w-full rounded-lg overflow-hidden border relative">
-      <MapContainer center={center} zoom={12} className="h-full w-full">
+    <div className="h-[400px] w-full rounded-lg overflow-hidden border border-gray-300 shadow-sm">
+      <MapContainer
+        center={center}
+        zoom={13}
+        scrollWheelZoom={true}
+        className="h-full w-full"
+      >
+        {/* Capa base */}
         <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>'
         />
-        <FitToAllMarkers clientes={clientesConCoords} />
 
-        {clientesConCoords.map((c) => (
-          <Marker key={c.id} position={[c.lat!, c.lng!]}>
-            <Popup>
-              <strong>{c.nombre}</strong>
-              <br />
-              {c.direccion && <>{c.direccion}<br /></>}
-              {c.comuna && c.ciudad && (
-                <>
-                  {c.comuna}, {c.ciudad}
-                  <br />
-                </>
-              )}
-              <span className="text-xs text-gray-600">
+        {/* Detecta clics */}
+        <MapClickHandler onClick={onMapClick} />
+
+        {/* Marcadores de clientes */}
+        {clientes
+          .filter((c) => c.lat && c.lng)
+          .map((c) => (
+            <Marker key={c.id} position={[c.lat!, c.lng!]} icon={icon}>
+              <Popup>
+                <strong>{c.nombre}</strong>
+                <br />
                 Lat: {c.lat?.toFixed(4)} / Lng: {c.lng?.toFixed(4)}
-              </span>
-            </Popup>
-          </Marker>
-        ))}
-
-        {clientesConCoords.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/80 text-gray-600 font-medium">
-            Sin ubicaciones registradas 📍
-          </div>
-        )}
+              </Popup>
+            </Marker>
+          ))}
       </MapContainer>
     </div>
   );
