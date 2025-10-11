@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { createClient } from "@supabase/supabase-js";
 
-// Cargar mapa dinámicamente
+// 🗺️ Mapa dinámico (solo cliente)
 const Map = dynamic(() => import("@/components/ClientesMap"), { ssr: false });
 
-// Conexión Supabase
+// 🔗 Supabase
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -30,7 +30,7 @@ export default function ClientesPage() {
   const [form, setForm] = useState<Partial<Cliente>>({});
   const [loading, setLoading] = useState(false);
 
-  // 🔹 Cargar clientes
+  // 📦 Cargar clientes desde Supabase
   async function loadClientes() {
     const { data, error } = await supabase
       .from("crm_clientes")
@@ -44,28 +44,62 @@ export default function ClientesPage() {
     loadClientes();
   }, []);
 
-  // 🔹 Normalizador de coordenadas
+  // 🌍 Geocodificar dirección usando OpenStreetMap (Nominatim)
+  async function getCoordsFromAddress(direccion: string, comuna?: string, ciudad?: string) {
+    try {
+      const fullAddress = [direccion, comuna, ciudad, "Chile"].filter(Boolean).join(", ");
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(fullAddress)}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data && data.length > 0) {
+        const { lat, lon } = data[0];
+        return { lat: parseFloat(lat), lng: parseFloat(lon) };
+      }
+      return { lat: null, lng: null };
+    } catch (e) {
+      console.error("Error geocodificando dirección:", e);
+      return { lat: null, lng: null };
+    }
+  }
+
+  // 🔹 Normalizar coordenadas manuales o GPS
   function normalizeCoords(lat?: number | string, lng?: number | string) {
     if (lat == null || lng == null) return { lat: null, lng: null };
     let la = Number(lat);
     let ln = Number(lng);
-
     if (Number.isNaN(la) || Number.isNaN(ln)) return { lat: null, lng: null };
-
-    // Si están invertidas (lat > 90, lng dentro de rango válido)
     if (Math.abs(la) > 90 && Math.abs(ln) <= 90) {
       const tmp = la;
       la = ln;
       ln = tmp;
     }
-
-    // Validar rango
     if (la < -90 || la > 90 || ln < -180 || ln > 180) return { lat: null, lng: null };
-
     return { lat: Number(la.toFixed(6)), lng: Number(ln.toFixed(6)) };
   }
 
-  // 🔹 Guardar cliente
+  // 🧮 Validar RUT chileno
+  function validarRut(rut: string): boolean {
+    rut = rut.replace(/^0+|[^0-9kK]+/g, "").toUpperCase();
+    if (rut.length < 8) return false;
+
+    const cuerpo = rut.slice(0, -1);
+    const dv = rut.slice(-1);
+    let suma = 0;
+    let multiplo = 2;
+
+    for (let i = cuerpo.length - 1; i >= 0; i--) {
+      suma += parseInt(cuerpo[i]) * multiplo;
+      multiplo = multiplo < 7 ? multiplo + 1 : 2;
+    }
+
+    const dvEsperado = 11 - (suma % 11);
+    const dvCalculado =
+      dvEsperado === 11 ? "0" : dvEsperado === 10 ? "K" : dvEsperado.toString();
+
+    return dv === dvCalculado;
+  }
+
+  // 💾 Guardar cliente
   async function saveCliente(e: React.FormEvent) {
     e.preventDefault();
 
@@ -74,27 +108,49 @@ export default function ClientesPage() {
       return;
     }
 
-    const { lat, lng } = normalizeCoords(form.lat, form.lng);
+    const rutLimpio = form.rut.replace(/\./g, "").replace("-", "").toUpperCase();
+    if (!validarRut(rutLimpio)) {
+      alert("❌ RUT inválido. Revise el formato o el dígito verificador.");
+      return;
+    }
 
-    if (lat == null || lng == null) {
-      const confirmar = window.confirm(
-        "⚠️ Coordenadas vacías o inválidas. ¿Desea guardar sin ubicación?"
-      );
-      if (!confirmar) return;
+    // Verificar duplicado
+    const { data: existe } = await supabase
+      .from("crm_clientes")
+      .select("id")
+      .eq("rut", rutLimpio)
+      .maybeSingle();
+
+    if (existe) {
+      alert("⚠️ El cliente con este RUT ya existe en la base de datos.");
+      return;
+    }
+
+    let { lat, lng } = normalizeCoords(form.lat, form.lng);
+
+    // 🌎 Si no hay coordenadas, intentar obtener desde la dirección
+    if ((!lat || !lng) && form.direccion) {
+      const geo = await getCoordsFromAddress(form.direccion, form.comuna, form.ciudad);
+      lat = geo.lat;
+      lng = geo.lng;
+      if (lat && lng) {
+        alert(`📍 Coordenadas obtenidas desde dirección:\nLat: ${lat.toFixed(5)} / Lng: ${lng.toFixed(5)}`);
+      } else {
+        alert("⚠️ No se pudo ubicar la dirección automáticamente.");
+      }
     }
 
     const payload = {
-      nombre: form.nombre,
-      rut: form.rut,
-      direccion: form.direccion ?? null,
-      comuna: form.comuna ?? null,
-      ciudad: form.ciudad ?? null,
+      nombre: form.nombre.trim(),
+      rut: rutLimpio,
+      direccion: form.direccion?.trim() ?? null,
+      comuna: form.comuna?.trim() ?? null,
+      ciudad: form.ciudad?.trim() ?? null,
       lat: lat ?? null,
       lng: lng ?? null,
     };
 
     console.log("🛰️ Insertando cliente:", payload);
-
     setLoading(true);
     const { error } = await supabase.from("crm_clientes").insert([payload]);
     setLoading(false);
@@ -110,7 +166,7 @@ export default function ClientesPage() {
     loadClientes();
   }
 
-  // 🔹 Eliminar cliente
+  // 🗑️ Eliminar cliente
   async function deleteCliente(id: string) {
     if (!confirm("¿Seguro que desea eliminar este cliente?")) return;
     const { error } = await supabase.from("crm_clientes").delete().eq("id", id);
@@ -118,7 +174,7 @@ export default function ClientesPage() {
     else loadClientes();
   }
 
-  // 🔹 Obtener ubicación GPS actual
+  // 📡 Obtener ubicación GPS
   async function getUbicacion() {
     if (!navigator.geolocation) {
       alert("Geolocalización no soportada");
@@ -176,7 +232,7 @@ export default function ClientesPage() {
           onChange={(e) => setForm({ ...form, ciudad: e.target.value })}
         />
 
-        {/* === Inputs de coordenadas === */}
+        {/* === Coordenadas === */}
         <input
           className="border p-2 rounded"
           type="text"
