@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import dynamic from "next/dynamic";
 
-// Cargar el mapa solo en el cliente (evita errores SSR)
+// Cargar el mapa solo en el cliente
 const Map = dynamic(() => import("@/components/ClientesMap"), { ssr: false });
 
 // Configuración Supabase
@@ -30,37 +30,37 @@ export default function ClientesPage() {
   const [form, setForm] = useState<Partial<Cliente>>({});
   const [loading, setLoading] = useState(false);
 
-  // Cargar clientes
+  // Cargar clientes desde Supabase
   async function loadClientes() {
     const { data, error } = await supabase
       .from("crm_clientes")
       .select("*")
       .order("created_at", { ascending: false });
+
     if (error) console.error(error);
     else setClientes(data || []);
   }
 
   useEffect(() => {
     loadClientes();
-  }, []);
 
-  // Guardar nuevo cliente
-  async function saveCliente(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.nombre || !form.rut) {
-      alert("Debe ingresar Nombre y RUT del cliente");
-      return;
-    }
-    setLoading(true);
-    const { error } = await supabase.from("crm_clientes").insert([form]);
-    if (error) alert("Error al guardar: " + error.message);
-    else {
-      alert("Cliente registrado ✅");
-      setForm({});
-      loadClientes();
-    }
-    setLoading(false);
-  }
+    // Escuchar cambios en tiempo real (INSERT, DELETE, UPDATE)
+    const channel = supabase
+      .channel("realtime-clientes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "crm_clientes" },
+        () => {
+          loadClientes(); // recargar automáticamente
+        }
+      )
+      .subscribe();
+
+    // Limpieza del canal cuando se desmonta el componente
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   // Capturar coordenadas
   async function getUbicacion() {
@@ -68,13 +68,53 @@ export default function ClientesPage() {
       alert("Geolocalización no soportada");
       return;
     }
+
     navigator.geolocation.getCurrentPosition(
-      (p) => {
-        setForm((f) => ({ ...f, lat: p.coords.latitude, lng: p.coords.longitude }));
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setForm((f) => ({ ...f, lat: latitude, lng: longitude }));
+        alert(
+          `📍 Coordenadas registradas:\nLat: ${latitude.toFixed(
+            5
+          )} / Lng: ${longitude.toFixed(5)}`
+        );
       },
       (err) => alert("Error al obtener ubicación: " + err.message),
       { enableHighAccuracy: true, timeout: 10000 }
     );
+  }
+
+  // Guardar nuevo cliente
+  async function saveCliente(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!form.nombre || !form.rut) {
+      alert("Debe ingresar Nombre y RUT del cliente");
+      return;
+    }
+
+    setLoading(true);
+
+    const nuevoCliente = {
+      nombre: form.nombre,
+      rut: form.rut,
+      direccion: form.direccion,
+      comuna: form.comuna,
+      ciudad: form.ciudad,
+      lat: form.lat ?? null,
+      lng: form.lng ?? null,
+    };
+
+    const { error } = await supabase.from("crm_clientes").insert([nuevoCliente]);
+
+    if (error) {
+      alert("Error al guardar: " + error.message);
+    } else {
+      alert("Cliente registrado ✅");
+      setForm({});
+    }
+
+    setLoading(false);
   }
 
   return (
@@ -116,6 +156,7 @@ export default function ClientesPage() {
           value={form.ciudad || ""}
           onChange={(e) => setForm({ ...form, ciudad: e.target.value })}
         />
+
         <button
           type="button"
           onClick={getUbicacion}
@@ -143,6 +184,8 @@ export default function ClientesPage() {
               <th className="p-2 text-left">Dirección</th>
               <th className="p-2 text-left">Comuna</th>
               <th className="p-2 text-left">Ciudad</th>
+              <th className="p-2 text-left">Lat</th>
+              <th className="p-2 text-left">Lng</th>
             </tr>
           </thead>
           <tbody>
@@ -153,6 +196,8 @@ export default function ClientesPage() {
                 <td className="p-2">{c.direccion}</td>
                 <td className="p-2">{c.comuna}</td>
                 <td className="p-2">{c.ciudad}</td>
+                <td className="p-2">{c.lat?.toFixed(5)}</td>
+                <td className="p-2">{c.lng?.toFixed(5)}</td>
               </tr>
             ))}
           </tbody>
@@ -166,4 +211,3 @@ export default function ClientesPage() {
     </div>
   );
 }
-//Prueba de cummit//
